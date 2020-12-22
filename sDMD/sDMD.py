@@ -56,12 +56,15 @@ def compute_svd(X, r):
 
 
 class sDMD_base(object):
-    def __init__(self, X, Y, rmin, rmax, thres=0.2, halflife=None, chunksize=1):
+    def __init__(
+        self, X, Y, rmin, rmax, thres=0.2, halflife=None, chunksize=1, farm_cost=False
+    ):
 
         self.rmin = rmin
         self.rmax = rmax
         self.thres = thres
         self.chunksize = chunksize
+        self.farm_cost = farm_cost
         self.x_list = []
         self.y_list = []
 
@@ -83,7 +86,10 @@ class sDMD_base(object):
         if len(self.x_list) >= self.chunksize:
             Y = np.array(self.y_list).T
 
-            performance_measure = self.not_performing2(Y)
+            if self.farm_cost:
+                performance_measure = self.not_performing2(Y)
+            else:
+                performance_measure = self.not_performing(Y)
             if performance_measure > self.thres:
                 status = self.update_basis(Y)
 
@@ -91,9 +97,9 @@ class sDMD_base(object):
                 self.update_single(x, y)
             self.x_list.clear()
             self.y_list.clear()
-            return status, performance_measure
+            return status
 
-        return 0, np.nan
+        return 0
 
     def not_performing(self, Y):
 
@@ -194,7 +200,7 @@ class sDMD_base(object):
 
     @property
     def modes(self):
-        eigvals, eigvecs = splinalg.eig(odmd.A)
+        eigvals, eigvecs = splinalg.eig(self.A)
         idx = abs(eigvals).argsort()[::-1]
         eigvals = eigvals[idx]
         eigvecs = eigvecs[:, idx]
@@ -219,9 +225,10 @@ class sDMD(sDMD_base):
         self.rolling_x = np.hstack([self.rolling_x, x_in])
         X_hank = hankel_transform(self.rolling_x, self.s)
         self.x_buff = X_hank[:, -1]
-
+        xnew = X_hank[:, 0]
         ynew = X_hank[:, -1]
 
-        super().update(xnew, ynew)
+        status = super().update(xnew, ynew)
 
         self.rolling_x = self.rolling_x[:, 1:]
+        return status
