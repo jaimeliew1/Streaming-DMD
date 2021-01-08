@@ -1,6 +1,4 @@
 import numpy as np
-from scipy import linalg as splinalg
-from tqdm import tqdm, trange
 
 
 def hankel_transform(X, s):
@@ -28,7 +26,7 @@ def hankel_transform(X, s):
     return out
 
 
-def compute_svd(X, r):
+def truncatedSVD(X, r):
     """
     Computes the truncated singular value decomposition (SVD)
     args:
@@ -56,147 +54,101 @@ def compute_svd(X, r):
 
 
 class sDMD_base(object):
-    def __init__(
-        self, X, Y, rmin, rmax, thres=0.2, halflife=None, chunksize=1, farm_cost=False
-    ):
+    """
+    Calculate DMD in streaming mode. Python class based on M.S. Hemati, M.O.
+    Williams, C.W. Rowley, "Dynamic Mode Decomposition for Large and Streaming
+    Datasets", Physics of Fluids 26, 111701 (2014).
+    """
+
+    def __init__(self, X, Y, rmin, rmax, thres=0.2, halflife=None):
 
         self.rmin = rmin
         self.rmax = rmax
         self.thres = thres
-        self.chunksize = chunksize
-        self.farm_cost = farm_cost
-        self.x_list = []
-        self.y_list = []
-
         self.halflife = halflife
         self.rho = 1 if halflife is None else 2 ** (-1 / halflife)
-        self.U, _, _ = compute_svd(X, rmin)
 
-        X_tild = self.U.T @ X
-        Y_tild = self.U.T @ Y
+        self.Ux, _, _ = truncatedSVD(X, rmin)
+        self.Uy, _, _ = truncatedSVD(Y, rmin)
 
-        self.Pinv = X_tild @ X_tild.T
+        X_tild = self.Ux.T @ X
+        Y_tild = self.Uy.T @ Y
+
         self.Q = Y_tild @ X_tild.T
+        self.Pinvx = X_tild @ X_tild.T
+        self.Pinvy = Y_tild @ Y_tild.T
 
-    def update(self, xin, yin):
-        self.x_list.append(xin)
-        self.y_list.append(yin)
-
+    def update(self, x, y):
+        x, y = x.reshape([-1, 1]), y.reshape([-1, 1])
         status = 0
-        if len(self.x_list) >= self.chunksize:
-            Y = np.array(self.y_list).T
 
-            if self.farm_cost:
-                performance_measure = self.not_performing2(Y)
-            else:
-                performance_measure = self.not_performing(Y)
-            if performance_measure > self.thres:
-                status = self.update_basis(Y)
+        normx = np.linalg.norm(x, ord=2, axis=0)
+        normy = np.linalg.norm(y, ord=2, axis=0)
 
-            for x, y in zip(self.x_list, self.y_list):
-                self.update_single(x, y)
-            self.x_list.clear()
-            self.y_list.clear()
-            return status
 
-        return 0
+        xtilde = self.Ux.T @ x
+        ytilde = self.Uy.T @ y
 
-    def not_performing(self, Y):
+        ex = x - self.Ux @ xtilde
+        ey = y - self.Uy @ ytilde
 
-        Y_tild = self.U.T @ Y
-        resid = Y - self.U @ Y_tild
-        p = np.linalg.norm(resid, ord=2, axis=0)
-        ref = np.linalg.norm(Y, ord=2, axis=0)
+        #### STEP 1 - BASIS EXPANSION ####
+        # Check if x basis needs to be expanded
+        if np.linalg.norm(ex, ord=2, axis=0) / normx > self.thres:
 
-        ind = (p / ref).argmax()
-        p_max = (p / ref)[ind]
+            u_new = ex / np.linalg.norm(ex, ord=2, axis=0)
+            self.Ux = np.hstack([self.Ux, (u_new).reshape([-1, 1])])
 
-        return p_max > self.thres
+            self.Pinvx = np.hstack([self.Pinvx, np.zeros([self.Pinvx.shape[0], 1])])
+            self.Pinvx = np.vstack([self.Pinvx, np.zeros([1, self.Pinvx.shape[1]])])
+            self.Q = np.hstack([self.Q, np.zeros([self.Q.shape[0], 1])])
+            status = 1
 
-    def not_performing2(self, Y):
+        # Check if y basis needs to be expanded
+        if np.linalg.norm(ey, ord=2, axis=0) / normy > self.thres:
+            u_new = ey / np.linalg.norm(ey, ord=2, axis=0)
+            self.Uy = np.hstack([self.Uy, (u_new).reshape([-1, 1])])
 
-        Y_tild = self.U.T @ Y
-        resid = (Y - self.U @ Y_tild)[-1, :]
+            self.Pinvy = np.hstack([self.Pinvy, np.zeros([self.Pinvy.shape[0], 1])])
+            self.Pinvy = np.vstack([self.Pinvy, np.zeros([1, self.Pinvy.shape[1]])])
+            self.Q = np.vstack([self.Q, np.zeros([1, self.Q.shape[1]])])
+            status = -1
 
-        ind = abs(resid / Y[-1, :]).argmax()
-        p_max = abs(resid / Y[-1, :])[ind]
+        #### STEP 2 - BASIS POD COMPRESSION ####
+        # Check if x basis needs to be compressed
+        if self.Ux.shape[1] > self.rmax:
+            eigval, eigvec = np.linalg.eig(self.Pinvx)
+            indx = np.argsort(-eigval)
+            eigval = eigval[indx]
+            qx = eigvec[:, indx[:self.rmin]]
 
-        return p_max
-
-    def update_basis(self, Y):
-        status = 1
-        if self.rank >= self.rmax:
-
-            eigvecs = self.leading_eigvecs
-            self.Pinv = eigvecs.T @ self.Pinv @ eigvecs
-            self.Q = eigvecs.T @ self.Q @ eigvecs
-            self.U = self.U @ eigvecs
+            self.Ux = self.Ux @ qx
+            self.Q = self.Q @ qx
+            self.Pinvx = np.diag(eigval[:self.rmin])
             status = 2
 
-        Y_tild = self.U.T @ Y
-        resid = Y - self.U @ Y_tild
+        # Check if y basis needs to be compressed
+        if self.Uy.shape[1] > self.rmax:
+            eigval, eigvec = np.linalg.eig(self.Pinvy)
+            indx = np.argsort(-eigval)
+            eigval = -np.sort(-eigval)
+            qy = eigvec[:, indx[:self.rmin]]
 
-        p = np.linalg.norm(resid, ord=2, axis=0)
-        ref = np.linalg.norm(Y, ord=2, axis=0)
+            self.Uy = self.Uy @ qy
+            self.Q = qy.T @ self.Q
+            self.Pinvy = np.diag(eigval[:self.rmin])
+            status = -2
 
-        ind = (p / ref).argmax()
-        p_max = (p / ref)[ind]
-        u_new = resid[:, ind].reshape([-1, 1])
-        for u in self.U.T:
-            u = u.reshape([-1, 1])
-            R = (u_new.T @ u) / (u.T @ u)
+        #### STEP 3 - REGRESSION UPDATE ####
+        xtilde = self.Ux.T @ x
+        ytilde = self.Uy.T @ y
 
-            u_new = u_new - R * u
-        u_new = u_new / np.linalg.norm(u_new, ord=2)
-        U = np.hstack([self.U, (u_new).reshape([-1, 1])])
-        U = splinalg.orth(U)
+        self.Q = self.rho * self.Q + ytilde @ xtilde.T
+        self.Pinvx = self.rho * self.Pinvx + xtilde @ xtilde.T
+        self.Pinvy = self.rho * self.Pinvy + ytilde @ ytilde.T
 
-        self.U = U
-        new_shape = [x + 1 for x in self.Pinv.shape]
-        tmp = np.zeros(new_shape)
-        tmp[:-1, :-1] = self.Pinv
-        self.Pinv = tmp
-        tmp = np.zeros(new_shape)
-        tmp[:-1, :-1] = self.Q
-        self.Q = tmp
         return status
 
-    def update_single(self, x, y):
-        status = 0
-        x, y = x.reshape([-1, 1]), y.reshape([-1, 1])
-        x_tild = self.U.T @ x
-        y_tild = self.U.T @ y
-
-        # check residual of projection of y. Y is chosen as it sees the newest
-        # observation.
-        resid = y - self.U @ y_tild
-        p = np.linalg.norm(resid, ord=2)
-
-        self.Pinv = self.rho * self.Pinv + x_tild @ x_tild.T
-        self.Q = self.rho * self.Q + y_tild @ x_tild.T
-
-    def _leading_eigvecs(self, freqs=False):
-        vals, vecs = self.modes
-        out = []
-        freq_out = []
-        for i in range(len(vals)):
-            if i == 0 or vals[i] != vals[i - 1]:
-                out.append(vecs[i])
-                freq_out.append(vals[i])
-            if len(out) == self.rmin:
-                break
-
-        out = np.column_stack(out).real
-        out = splinalg.orth(out)
-
-        if freqs:
-            return out, freq_out
-        else:
-            return out
-
-    @property
-    def leading_eigvecs(self):
-        return self._leading_eigvecs()
 
     @property
     def rank(self):
@@ -204,16 +156,25 @@ class sDMD_base(object):
 
     @property
     def A(self):
-        # do decomposition instead of inv
-        return self.Q @ np.linalg.inv(self.Pinv)
+        """
+        Computes the reduced order transition matrix from xtilde to ytilde.
+        """
+        # return self.Ux.T @ self.Uy @ self.Q @ np.linalg.pinv(self.Pinvx)
+        return self.Q @ np.linalg.pinv(self.Pinvx)
 
     @property
     def modes(self):
-        eigvals, eigvecs = splinalg.eig(self.A)
-        idx = abs(eigvals).argsort()[::-1]
-        eigvals = eigvals[idx]
-        eigvecs = eigvecs[:, idx]
-        return eigvals, eigvecs
+        """
+        Compute DMD modes and eigenvalues. The first output is the eigenmode
+        matrix where the columns are eigenvectors. The second output are the
+        discrete time eigenvalues. Assumes the input and output space are the
+        same.
+        """
+
+        eigvals, eigvecK = np.linalg.eig(self.Ux.T @ self.Uy @ self.A)
+        modes = self.Ux @ eigvecK
+
+        return modes, eigvals
 
 
 class sDMD(sDMD_base):
