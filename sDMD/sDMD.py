@@ -175,19 +175,28 @@ class sDMD_base(object):
         self.Pinv = self.rho * self.Pinv + x_tild @ x_tild.T
         self.Q = self.rho * self.Q + y_tild @ x_tild.T
 
-    @property
-    def leading_eigvecs(self):
+    def _leading_eigvecs(self, freqs=False):
         vals, vecs = self.modes
         out = []
+        freq_out = []
         for i in range(len(vals)):
             if i == 0 or vals[i] != vals[i - 1]:
                 out.append(vecs[i])
+                freq_out.append(vals[i])
             if len(out) == self.rmin:
                 break
 
         out = np.column_stack(out).real
         out = splinalg.orth(out)
-        return out
+
+        if freqs:
+            return out, freq_out
+        else:
+            return out
+
+    @property
+    def leading_eigvecs(self):
+        return self._leading_eigvecs()
 
     @property
     def rank(self):
