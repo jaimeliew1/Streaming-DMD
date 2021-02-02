@@ -85,7 +85,6 @@ class sDMD_base(object):
         normx = np.linalg.norm(x, ord=2, axis=0)
         normy = np.linalg.norm(y, ord=2, axis=0)
 
-
         xtilde = self.Ux.T @ x
         ytilde = self.Uy.T @ y
 
@@ -120,11 +119,11 @@ class sDMD_base(object):
             eigval, eigvec = np.linalg.eig(self.Pinvx)
             indx = np.argsort(-eigval)
             eigval = eigval[indx]
-            qx = eigvec[:, indx[:self.rmin]]
+            qx = eigvec[:, indx[: self.rmin]]
 
             self.Ux = self.Ux @ qx
             self.Q = self.Q @ qx
-            self.Pinvx = np.diag(eigval[:self.rmin])
+            self.Pinvx = np.diag(eigval[: self.rmin])
             status = 2
 
         # Check if y basis needs to be compressed
@@ -132,11 +131,11 @@ class sDMD_base(object):
             eigval, eigvec = np.linalg.eig(self.Pinvy)
             indx = np.argsort(-eigval)
             eigval = -np.sort(-eigval)
-            qy = eigvec[:, indx[:self.rmin]]
+            qy = eigvec[:, indx[: self.rmin]]
 
             self.Uy = self.Uy @ qy
             self.Q = qy.T @ self.Q
-            self.Pinvy = np.diag(eigval[:self.rmin])
+            self.Pinvy = np.diag(eigval[: self.rmin])
             status = -2
 
         #### STEP 3 - REGRESSION UPDATE ####
@@ -148,7 +147,6 @@ class sDMD_base(object):
         self.Pinvy = self.rho * self.Pinvy + ytilde @ ytilde.T
 
         return status
-
 
     @property
     def rank(self):
@@ -178,25 +176,33 @@ class sDMD_base(object):
 
 
 class sDMD(sDMD_base):
-    def __init__(self, X, rmin, rmax, f=1, s=1, **kwargs):
+    def __init__(self, X, rmin, rmax, Y=None, f=1, s=1, **kwargs):
         self.s = s
         self.f = f
-
+        if Y is None:
+            Y = X
         self.rolling_x = X[:, -(s + f - 1) :]
 
         X_hank = hankel_transform(X, s)
-        X_hank, Y_hank = X_hank[:, :-f], X_hank[:, f:]
 
-        super().__init__(X_hank, Y_hank, rmin, rmax, **kwargs)
+        X_hank = X_hank[:, :-f]
+        Y_init = Y[:, f + s - 1 :]
 
-    def update(self, x_in):
+        super().__init__(X_hank, Y_init, rmin, rmax, **kwargs)
 
+    def update(self, x_in, y_in=None):
+        if y_in is None:
+            y_in = x_in
         x_in = x_in.reshape(-1, 1)
+        y_in = y_in.reshape(-1, 1)
+
         self.rolling_x = np.hstack([self.rolling_x, x_in])
+
         X_hank = hankel_transform(self.rolling_x, self.s)
+
         self.x_buff = X_hank[:, -1]
         xnew = X_hank[:, 0]
-        ynew = X_hank[:, -1]
+        ynew = y_in
 
         status = super().update(xnew, ynew)
 
