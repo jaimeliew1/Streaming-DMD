@@ -6,6 +6,6 @@ suited to performing DMD analysis on-the-fly. The implementation is based on the
 # Installation
 
 ```
-git clone https://gitlab.windenergy.dtu.dk/jaime-s-phd/streaming-dmd.git
+git clone https://github.com/jaimeliew1/Streaming-DMD.git
 pip install -e streaming_dmd
 ```
