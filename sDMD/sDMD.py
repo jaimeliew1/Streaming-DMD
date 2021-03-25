@@ -1,3 +1,21 @@
+"""
+Streaming DMD
+A Python implementation of the streaming dynamic mode decomposition algorithm
+described in the paper Liew, J. et al. "Streaming dynamic mode decomposition for
+short-term forecasting in wind farms"
+
+The algorithm performs a continuously updating dynamic mode decomposition as new
+data is made available.
+
+The equations referred to in this paper correspond to the equations in:
+    Liew, J. et al. "Streaming dynamic mode decomposition for
+    short-term forecasting in wind farms"
+
+Author: Jaime Liew
+License: MIT (see LICENSE.txt)
+Version: 1.0
+Email: jyli@dtu.dk
+"""
 import numpy as np
 
 
@@ -55,9 +73,7 @@ def truncatedSVD(X, r):
 
 class sDMD_base(object):
     """
-    Calculate DMD in streaming mode. Python class based on M.S. Hemati, M.O.
-    Williams, C.W. Rowley, "Dynamic Mode Decomposition for Large and Streaming
-    Datasets", Physics of Fluids 26, 111701 (2014).
+    Calculate DMD in streaming mode. 
     """
 
     def __init__(self, X, Y, rmin, rmax, thres=0.2, halflife=None):
@@ -68,12 +84,16 @@ class sDMD_base(object):
         self.halflife = halflife
         self.rho = 1 if halflife is None else 2 ** (-1 / halflife)
 
+        # Eq. (2) - truncated SVD
         self.Ux, _, _ = truncatedSVD(X, rmin)
         self.Uy, _, _ = truncatedSVD(Y, rmin)
 
+        # Eq. (3) - Mapping of input vector to reduced order space.
         X_tild = self.Ux.T @ X
+        # Eq. (4) - Mapping of out vector to reduced order space.
         Y_tild = self.Uy.T @ Y
 
+        # Eq (9) - Decomposition of transition matrix into the product of Q and Pinvx.
         self.Q = Y_tild @ X_tild.T
         self.Pinvx = X_tild @ X_tild.T
         self.Pinvy = Y_tild @ Y_tild.T
@@ -88,11 +108,12 @@ class sDMD_base(object):
         xtilde = self.Ux.T @ x
         ytilde = self.Uy.T @ y
 
+        # Numerator of Eq. (14) - projection error.
         ex = x - self.Ux @ xtilde
         ey = y - self.Uy @ ytilde
 
         #### STEP 1 - BASIS EXPANSION ####
-        # Check if x basis needs to be expanded
+        # Table 1: Rank augmentation of Ux
         if np.linalg.norm(ex, ord=2, axis=0) / normx > self.thres:
 
             u_new = ex / np.linalg.norm(ex, ord=2, axis=0)
@@ -103,7 +124,7 @@ class sDMD_base(object):
             self.Q = np.hstack([self.Q, np.zeros([self.Q.shape[0], 1])])
             status = 1
 
-        # Check if y basis needs to be expanded
+        # Table 1: Rank augmentation of Uy
         if np.linalg.norm(ey, ord=2, axis=0) / normy > self.thres:
             u_new = ey / np.linalg.norm(ey, ord=2, axis=0)
             self.Uy = np.hstack([self.Uy, (u_new).reshape([-1, 1])])
@@ -114,7 +135,7 @@ class sDMD_base(object):
             status = -1
 
         #### STEP 2 - BASIS POD COMPRESSION ####
-        # Check if x basis needs to be compressed
+        # Table 1: Rank reduction of Ux
         if self.Ux.shape[1] > self.rmax:
             eigval, eigvec = np.linalg.eig(self.Pinvx)
             indx = np.argsort(-eigval)
@@ -126,7 +147,7 @@ class sDMD_base(object):
             self.Pinvx = np.diag(eigval[: self.rmin])
             status = 2
 
-        # Check if y basis needs to be compressed
+        # Table 1: Rank reduction of Uy
         if self.Uy.shape[1] > self.rmax:
             eigval, eigvec = np.linalg.eig(self.Pinvy)
             indx = np.argsort(-eigval)
@@ -142,6 +163,7 @@ class sDMD_base(object):
         xtilde = self.Ux.T @ x
         ytilde = self.Uy.T @ y
 
+        # Eq. (10), (11), and (12) - Rank 1 update of DMD matrices.
         self.Q = self.rho * self.Q + ytilde @ xtilde.T
         self.Pinvx = self.rho * self.Pinvx + xtilde @ xtilde.T
         self.Pinvy = self.rho * self.Pinvy + ytilde @ ytilde.T
@@ -176,6 +198,12 @@ class sDMD_base(object):
 
 
 class sDMD(sDMD_base):
+    """
+    A wrapper class for sDMD_base. Manages the streaming data inputs and
+    transforms the data to correctly represent the additional channels and delay
+    states as described in Section 2.3 - State augmentation.
+    """
+
     def __init__(self, X, rmin, rmax, Y=None, f=1, s=1, **kwargs):
         self.s = s
         self.f = f
