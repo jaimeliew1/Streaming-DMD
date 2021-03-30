@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/337083998.svg)](https://zenodo.org/badge/latestdoi/337083998)
+
 # Streaming Dynamic Mode Decomposition (sDMD)
 
 This repository contains a Python implementation of Streaming Dynamic Mode Decomposition (sDMD) as described in the paper [Liew, J. et al. -  *Streaming dynamic mode decomposition for short-term forecasting in wind farms*](). The algorithm is suited to performing DMD analysis on-the-fly. 
