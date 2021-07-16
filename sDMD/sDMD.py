@@ -179,7 +179,6 @@ class sDMD_base(object):
         """
         Computes the reduced order transition matrix from xtilde to ytilde.
         """
-        # return self.Ux.T @ self.Uy @ self.Q @ np.linalg.pinv(self.Pinvx)
         return self.Q @ np.linalg.pinv(self.Pinvx)
 
     @property

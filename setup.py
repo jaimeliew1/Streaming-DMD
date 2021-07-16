@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name="sDMD",
-    version="0.1",
+    version="1.0",
     description="Streaming Dynamic Mode Decomposition",
     author="Jaime Liew",
     author_email="jyli@dtu.dk",
