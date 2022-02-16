@@ -235,3 +235,55 @@ class sDMD(sDMD_base):
 
         self.rolling_x = self.rolling_x[:, 1:]
         return status
+
+class sDMDc(sDMD_base):
+    """
+    An implementation of streaming dynamic mode decomposition with control.
+    Produces a one-shot system y_k+1 = Ax_k + Bu_k.
+
+    """
+
+    def __init__(self, X, U, rmin, rmax, Y=None, f=1, s=1, **kwargs):
+        self.s = s
+        self.f = f
+        self.nu = U.shape[0]
+        if Y is None:
+            Y = X
+        self.rolling_x = X[:, -(s + f - 1) :]
+
+        X_hank = hankel_transform(X, s)
+        U = U[:, s-1:]
+        X_hank = X_hank[:, :-f]
+        U = U[:, :-f]
+
+        X_hank = np.vstack([X_hank, U])
+        Y_init = Y[:, f + s - 1 :]
+
+        super().__init__(X_hank, Y_init, rmin, rmax, **kwargs)
+
+    def update(self, x_in, u_in, y_in=None):
+        if y_in is None:
+            y_in = x_in
+        x_in = x_in.reshape(-1, 1)
+        u_in = u_in.reshape(-1, 1)
+        y_in = y_in.reshape(-1, 1)
+
+        self.rolling_x = np.hstack([self.rolling_x, x_in])
+
+        X_hank = hankel_transform(self.rolling_x, self.s)
+
+        self.x_buff = X_hank[:, -1]
+        self.u_buff = u_in
+
+        xnew = np.vstack([X_hank[:, 0], u_in])
+        ynew = y_in
+
+        status = super().update(xnew, ynew)
+
+        self.rolling_x = self.rolling_x[:, 1:]
+        return status
+
+    @property
+    def B(self):
+        return self.Uy @ self.A @ self.Ux[-self.nu:, :].T
+
