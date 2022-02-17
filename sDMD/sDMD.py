@@ -17,7 +17,7 @@ Version: 1.0
 Email: jyli@dtu.dk
 """
 import numpy as np
-
+from .utilities import Delayer, Stacker
 
 def hankel_transform(X, s):
     """
@@ -61,7 +61,7 @@ def truncatedSVD(X, r):
         rank = min(r, U.shape[1])
 
     elif 0 < r < 1:
-        cumulative_energy = np.cumsum(S ** 2 / np.sum(S ** 2))
+        cumulative_energy = np.cumsum(S**2 / np.sum(S**2))
         rank = np.searchsorted(cumulative_energy, r) + 1
 
     U_r = U[:, :rank]
@@ -73,7 +73,7 @@ def truncatedSVD(X, r):
 
 class sDMD_base(object):
     """
-    Calculate DMD in streaming mode. 
+    Calculate DMD in streaming mode.
     """
 
     def __init__(self, X, Y, rmin, rmax, thres=0.2, halflife=None):
@@ -236,7 +236,8 @@ class sDMD(sDMD_base):
         self.rolling_x = self.rolling_x[:, 1:]
         return status
 
-class sDMDc(sDMD_base):
+
+class sDMDc_oneshot(sDMD_base):
     """
     An implementation of streaming dynamic mode decomposition with control.
     Produces a one-shot system y_k+1 = Ax_k + Bu_k.
@@ -252,7 +253,7 @@ class sDMDc(sDMD_base):
         self.rolling_x = X[:, -(s + f - 1) :]
 
         X_hank = hankel_transform(X, s)
-        U = U[:, s-1:]
+        U = U[:, s - 1 :]
         X_hank = X_hank[:, :-f]
         U = U[:, :-f]
 
@@ -285,5 +286,66 @@ class sDMDc(sDMD_base):
 
     @property
     def B(self):
-        return self.Uy @ self.A @ self.Ux[-self.nu:, :].T
+        return self.Uy @ self.A @ self.Ux[-self.nu :, :].T
 
+
+class sDMDc(sDMD_base):
+    """
+    An implementation of streaming dynamic mode decomposition with control.
+    Produces a system x_k+1 = Ax_k + Bu_k.
+    """
+
+    def __init__(self, X, U, rmin, rmax, f=1, s=1, **kwargs):
+
+        self.s = s
+        self.f = f
+        self.nu = U.shape[0]
+        self.nx = X.shape[0]
+        self.Ystack = Stacker(self.nx, self.s)
+        self.Xstack = Delayer(self.nx * self.s, self.f)
+        self.Ustack = Delayer(self.nu, self.f)
+
+        Y_hank = np.hstack([self.Ystack.update(x) for x in X.T])
+        X_hank = np.hstack([self.Xstack.update(x) for x in Y_hank.T])
+        U_hank = np.hstack([self.Ustack.update(x) for x in U.T])
+
+        XU_hank = np.vstack([X_hank, U_hank])
+
+        Y_hank = Y_hank[:, s + f:]
+        XU_hank = XU_hank[:, s + f:]
+
+        super().__init__(XU_hank, Y_hank, rmin, rmax, **kwargs)
+
+    def update(self, x_in, u_in):
+
+        x_in = x_in.reshape(-1, 1)
+        u_in = u_in.reshape(-1, 1)
+
+        yhank = self.Ystack.update(x_in)
+        xhank = self.Xstack.update(yhank)
+        udel = self.Ustack.update(u_in)
+
+        xnew = np.vstack([xhank, udel])
+
+        status = super().update(xnew, yhank)
+
+        return status
+
+    @property
+    def B(self):
+        return self.Uy @ self.A @ self.Ux[-self.nu :, :].T
+
+
+    @property
+    def modes(self):
+        """
+        Compute DMD modes and eigenvalues. The first output is the eigenmode
+        matrix where the columns are eigenvectors. The second output are the
+        discrete time eigenvalues. Assumes the input and output space are the
+        same.
+        """
+        Ux1 = self.Ux[:-self.nu, :]
+        eigvals, eigvecK = np.linalg.eig(Ux1.T @ self.Uy @ self.A)
+        modes = Ux1 @ eigvecK
+
+        return modes, eigvals
