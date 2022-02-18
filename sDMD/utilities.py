@@ -22,7 +22,7 @@ class Stacker:
 
 class Delayer:
     def __init__(self, n: int, f: int):
-        self.stack = deque(f * [np.zeros((n, 1))], maxlen=f)
+        self.stack = deque((f + 1) * [np.zeros((n, 1))], maxlen=f + 1)
 
     def update(self, x):
         self.stack.appendleft(x)
