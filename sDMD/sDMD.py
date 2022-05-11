@@ -17,7 +17,9 @@ Version: 1.0
 Email: jyli@dtu.dk
 """
 from enum import Enum
+
 import numpy as np
+
 from .utilities import Delayer, Stacker
 
 
@@ -254,49 +256,64 @@ class sDMDc_oneshot(sDMD_base):
 
     """
 
-    def __init__(self, X, U, rmin, rmax, Y=None, f=1, s=1, **kwargs):
+    def __init__(self, X, U, rmin, rmax, f=1, s=1, **kwargs):
+
         self.s = s
         self.f = f
         self.nu = U.shape[0]
-        if Y is None:
-            Y = X
-        self.rolling_x = X[:, -(s + f - 1) :]
+        self.nx = X.shape[0]
+        self.Xstack0 = Stacker(self.nx, self.s)
+        self.Xstack1 = Delayer(self.nx * self.s, self.f)
+        self.Ustack = Delayer(self.nu, self.f)
 
-        X_hank = hankel_transform(X, s)
-        U = U[:, s - 1 :]
-        X_hank = X_hank[:, :-f]
-        U = U[:, :-f]
+        X0_hank = np.hstack([self.Xstack0.update(x) for x in X.T])
+        X_hank = np.hstack([self.Xstack1.update(x) for x in X0_hank.T])
+        U_hank = np.hstack([self.Ustack.update(x) for x in U.T])
 
-        X_hank = np.vstack([X_hank, U])
-        Y_init = Y[:, f + s - 1 :]
+        XU_hank = np.vstack([X_hank, U_hank])
 
-        super().__init__(X_hank, Y_init, rmin, rmax, **kwargs)
+        Y = X[:, s + f :]
+        XU_hank = XU_hank[:, s + f :]
 
-    def update(self, x_in, u_in, y_in=None):
-        if y_in is None:
-            y_in = x_in
+        super().__init__(XU_hank, Y, rmin, rmax, **kwargs)
+
+    def update(self, x_in, u_in):
+
         x_in = x_in.reshape(-1, 1)
         u_in = u_in.reshape(-1, 1)
-        y_in = y_in.reshape(-1, 1)
 
-        self.rolling_x = np.hstack([self.rolling_x, x_in])
+        x0hank = self.Xstack0.update(x_in)
+        xhank = self.Xstack1.update(x0hank)
+        udel = self.Ustack.update(u_in)
 
-        X_hank = hankel_transform(self.rolling_x, self.s)
+        xnew = np.vstack([xhank, udel])
+        y = x_in
 
-        self.x_buff = X_hank[:, -1]
-        self.u_buff = u_in
+        status = super().update(xnew, y)
 
-        xnew = np.vstack([X_hank[:, 0], u_in])
-        ynew = y_in
-
-        status = super().update(xnew, ynew)
-
-        self.rolling_x = self.rolling_x[:, 1:]
         return status
 
     @property
     def B(self):
         return self.Uy @ self.A @ self.Ux[-self.nu :, :].T
+
+    @property
+    def CB(self):
+        return self.B
+
+    @property
+    def modes(self):
+        """
+        Compute DMD modes and eigenvalues. The first output is the eigenmode
+        matrix where the columns are eigenvectors. The second output are the
+        discrete time eigenvalues. Assumes the input and output space are the
+        same.
+        """
+        Ux1 = self.Ux[: -self.nu, :]
+        eigvals, eigvecK = np.linalg.eig(Ux1.T @ self.Uy @ self.A)
+        modes = Ux1 @ eigvecK
+
+        return modes, eigvals
 
 
 class sDMDc(sDMD_base):
@@ -311,18 +328,18 @@ class sDMDc(sDMD_base):
         self.f = f
         self.nu = U.shape[0]
         self.nx = X.shape[0]
-        self.Ystack = Stacker(self.nx, self.s)
-        self.Xstack = Delayer(self.nx * self.s, self.f)
+        self.Xstack0 = Stacker(self.nx, self.s)
+        self.Xstack1 = Delayer(self.nx * self.s, self.f)
         self.Ustack = Delayer(self.nu, self.f)
 
-        Y_hank = np.hstack([self.Ystack.update(x) for x in X.T])
-        X_hank = np.hstack([self.Xstack.update(x) for x in Y_hank.T])
+        Y_hank = np.hstack([self.Xstack0.update(x) for x in X.T])
+        X_hank = np.hstack([self.Xstack1.update(x) for x in Y_hank.T])
         U_hank = np.hstack([self.Ustack.update(x) for x in U.T])
 
         XU_hank = np.vstack([X_hank, U_hank])
 
-        Y_hank = Y_hank[:, s + f:]
-        XU_hank = XU_hank[:, s + f:]
+        Y_hank = Y_hank[:, s + f :]
+        XU_hank = XU_hank[:, s + f :]
 
         super().__init__(XU_hank, Y_hank, rmin, rmax, **kwargs)
 
@@ -331,8 +348,8 @@ class sDMDc(sDMD_base):
         x_in = x_in.reshape(-1, 1)
         u_in = u_in.reshape(-1, 1)
 
-        yhank = self.Ystack.update(x_in)
-        xhank = self.Xstack.update(yhank)
+        yhank = self.Xstack0.update(x_in)
+        xhank = self.Xstack1.update(yhank)
         udel = self.Ustack.update(u_in)
 
         xnew = np.vstack([xhank, udel])
@@ -345,6 +362,9 @@ class sDMDc(sDMD_base):
     def B(self):
         return self.Uy @ self.A @ self.Ux[-self.nu :, :].T
 
+    @property
+    def CB(self):
+        return self.B[: self.nx, :]
 
     @property
     def modes(self):
@@ -354,7 +374,7 @@ class sDMDc(sDMD_base):
         discrete time eigenvalues. Assumes the input and output space are the
         same.
         """
-        Ux1 = self.Ux[:-self.nu, :]
+        Ux1 = self.Ux[: -self.nu, :]
         eigvals, eigvecK = np.linalg.eig(Ux1.T @ self.Uy @ self.A)
         modes = Ux1 @ eigvecK
 
