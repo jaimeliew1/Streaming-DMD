@@ -11,6 +11,7 @@ class Stacker:
         self.stack = deque(s * [np.zeros((n))], maxlen=s)
 
     def update(self, x):
+        x = x.reshape(-1)
         self.stack.appendleft(x)
 
         return self()
@@ -25,6 +26,7 @@ class Delayer:
         self.stack = deque((f + 1) * [np.zeros((n, 1))], maxlen=f + 1)
 
     def update(self, x):
+        x = x.reshape(-1)
         self.stack.appendleft(x)
         return self()
 
