@@ -16,8 +16,16 @@ License: MIT (see LICENSE.txt)
 Version: 1.0
 Email: jyli@dtu.dk
 """
+from enum import Enum
 import numpy as np
 from .utilities import Delayer, Stacker
+
+
+class Status(Enum):
+    NONE = 0
+    AUGMENTATION = 1
+    REDUCTION = -1
+
 
 def hankel_transform(X, s):
     """
@@ -112,6 +120,8 @@ class sDMD_base(object):
         ex = x - self.Ux @ xtilde
         ey = y - self.Uy @ ytilde
 
+        x_status = Status.NONE
+        y_status = Status.NONE
         #### STEP 1 - BASIS EXPANSION ####
         # Table 1: Rank augmentation of Ux
         if np.linalg.norm(ex, ord=2, axis=0) / normx > self.thres:
@@ -122,7 +132,7 @@ class sDMD_base(object):
             self.Pinvx = np.hstack([self.Pinvx, np.zeros([self.Pinvx.shape[0], 1])])
             self.Pinvx = np.vstack([self.Pinvx, np.zeros([1, self.Pinvx.shape[1]])])
             self.Q = np.hstack([self.Q, np.zeros([self.Q.shape[0], 1])])
-            status = 1
+            x_status = Status.AUGMENTATION
 
         # Table 1: Rank augmentation of Uy
         if np.linalg.norm(ey, ord=2, axis=0) / normy > self.thres:
@@ -132,7 +142,7 @@ class sDMD_base(object):
             self.Pinvy = np.hstack([self.Pinvy, np.zeros([self.Pinvy.shape[0], 1])])
             self.Pinvy = np.vstack([self.Pinvy, np.zeros([1, self.Pinvy.shape[1]])])
             self.Q = np.vstack([self.Q, np.zeros([1, self.Q.shape[1]])])
-            status = -1
+            y_status = Status.AUGMENTATION
 
         #### STEP 2 - BASIS POD COMPRESSION ####
         # Table 1: Rank reduction of Ux
@@ -145,7 +155,7 @@ class sDMD_base(object):
             self.Ux = self.Ux @ qx
             self.Q = self.Q @ qx
             self.Pinvx = np.diag(eigval[: self.rmin])
-            status = 2
+            x_status = Status.REDUCTION
 
         # Table 1: Rank reduction of Uy
         if self.Uy.shape[1] > self.rmax:
@@ -157,7 +167,7 @@ class sDMD_base(object):
             self.Uy = self.Uy @ qy
             self.Q = qy.T @ self.Q
             self.Pinvy = np.diag(eigval[: self.rmin])
-            status = -2
+            y_status = Status.REDUCTION
 
         #### STEP 3 - REGRESSION UPDATE ####
         xtilde = self.Ux.T @ x
@@ -168,7 +178,7 @@ class sDMD_base(object):
         self.Pinvx = self.rho * self.Pinvx + xtilde @ xtilde.T
         self.Pinvy = self.rho * self.Pinvy + ytilde @ ytilde.T
 
-        return status
+        return x_status, y_status
 
     @property
     def rank(self):
